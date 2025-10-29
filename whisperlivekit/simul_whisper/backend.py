@@ -250,9 +250,18 @@ class SimulStreamingASR():
                     fw_model = self.model_path
                 else:
                     fw_model = self.model_name
+                
+                # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
+                if self.gpu_id is not None:
+                    fw_device = f'cuda:{self.gpu_id}'
+                    logger.info(f"Faster-Whisper encoder using GPU {self.gpu_id}")
+                else:
+                    fw_device = 'auto'
+                    logger.info("Faster-Whisper encoder using auto device")
+                
                 self.fw_encoder = WhisperModel(
                     fw_model,
-                    device='auto',
+                    device=fw_device,
                     compute_type='auto',
                 )
                 self.fast_encoder = True
@@ -271,7 +280,12 @@ class SimulStreamingASR():
         # Move model to assigned GPU device
         if self.device is not None:
             whisper_model = whisper_model.to(self.device)
-            logger.info(f"Loaded Whisper model on {self.device}")
+            logger.info(f"✅ Loaded Whisper model on {self.device} (GPU {self.gpu_id if self.gpu_id is not None else 'default'})")
+            
+            # Log GPU memory after model load
+            if torch.cuda.is_available() and self.gpu_id is not None:
+                allocated = torch.cuda.memory_allocated(self.gpu_id) / (1024**3)
+                logger.info(f"📊 GPU {self.gpu_id} memory after model load: {allocated:.2f} GB")
         
         warmup_audio = load_file(self.warmup_file)
         if warmup_audio is not None:

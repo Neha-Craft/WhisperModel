@@ -72,7 +72,7 @@ class GPUManager:
         
         # GPU configuration
         self.num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        self.max_connections_per_gpu = 4  # Configurable limit
+        self.max_connections_per_gpu = 2  # Changed from 4 to 2 per your requirement
         self.use_cpu_fallback = False  # No CPU fallback as requested
         
         # GPU allocation tracking

@@ -58,7 +58,9 @@ class PaddedAlignAttWhisper:
         if fw_encoder:
             self.fw_feature_extractor = FeatureExtractor(feature_size=self.model.dims.n_mels)
         
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # CRITICAL FIX: Use model's device instead of hardcoding 'cuda'
+        self.device = self.model.device
+        logger.info(f"PaddedAlignAttWhisper using device: {self.device}")
         
         logger.info(f"Model dimensions: {self.model.dims}")
         self.speaker = -1

@@ -115,6 +115,10 @@ class TranscriptionEngine:
                 }
                 simulstreaming_params = update_with_kwargs(simulstreaming_params, kwargs)
                 
+                # CRITICAL: Pass GPU device info to SimulStreamingASR
+                simulstreaming_params['gpu_id'] = self.gpu_id
+                simulstreaming_params['device'] = self.device
+                
                 self.tokenizer = None        
                 self.asr = SimulStreamingASR(
                     **transcription_common_params, **simulstreaming_params

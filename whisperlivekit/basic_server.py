@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
                 "init_prompt": None,
                 "static_init_prompt": None,
                 "max_context_tokens": None,
-                "model_path": args.model,
-                "model_size": args.model_size,
+                "model_path": args.model_dir,  # FIX: Use model_dir (path), not model (which doesn't exist)
+                "model_size": args.model_size,  # FIX: Use model_size attribute
                 "min_chunk_size": args.min_chunk_size,
                 "lan": args.lan,
                 "task": args.task,

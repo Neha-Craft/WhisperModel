@@ -124,6 +124,8 @@ class AudioProcessor:
         self.transcription = None
         self.translation = None
         self.diarization = None
+        self._transcription_initialized = False
+        self._models_for_transcription = models.asr if self.args.transcription else None
 
         if self.args.transcription:
             self.transcription = online_factory(self.args, models.asr)        
@@ -217,6 +219,14 @@ class AudioProcessor:
 
     async def transcription_processor(self):
         """Process audio chunks for transcription."""
+        # CRITICAL FIX: Lazy initialize transcription to prevent blocking server startup
+        if not self._transcription_initialized and self.args.transcription:
+            logger.info("⏳ Initializing transcription engine on first use...")
+            self.transcription = online_factory(self.args, self._models_for_transcription)
+            self.sep = self.transcription.asr.sep
+            self._transcription_initialized = True
+            logger.info("✅ Transcription engine initialized successfully")
+        
         cumulative_pcm_duration_stream_time = 0.0
         chunk_count = 0
         

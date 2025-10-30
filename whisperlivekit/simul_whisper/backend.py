@@ -99,7 +99,9 @@ class GlobalModelPool:
                 
                 for i in range(models_per_gpu):
                     try:
+                        logger.info(f"⏳ Loading model {i+1}/{models_per_gpu} for GPU {gpu_id}...")
                         model_tuple = model_loader_fn(gpu_id)
+                        logger.info(f"✅ Model {i+1}/{models_per_gpu} loaded for GPU {gpu_id}, adding to pool...")
                         self.models_by_gpu[gpu_id].append(model_tuple)
                         logger.info(f"✅ Preloaded model {i+1}/{models_per_gpu} for GPU {gpu_id}")
                     except Exception as e:
@@ -108,6 +110,7 @@ class GlobalModelPool:
             
             total_loaded = sum(len(models) for models in self.models_by_gpu.values())
             logger.info(f"🎉 Model preload complete: {total_loaded} models ready across {num_gpus} GPUs")
+            logger.info(f"📊 Pool stats: {self.get_pool_stats()}")
     
     def get_model(self, gpu_id: int) -> Optional[Tuple]:
         """
@@ -400,12 +403,15 @@ class SimulStreamingASR():
 
     def load_model(self):
         """Load a model and return (whisper_model, fw_encoder) tuple."""
+        logger.info(f"⏳ load_model() called for GPU {self.gpu_id}. Starting model loading...")
+        
         whisper_model = load_model(
             name=self.model_path if self.model_path else self.model_name,
             download_root=self.model_path,
             decoder_only=self.fast_encoder,
             custom_alignment_heads=self.custom_alignment_heads
             )
+        logger.info(f"✅ Whisper decoder model loaded for GPU {self.gpu_id}")
         
         # CRITICAL FIX: Create per-connection Faster-Whisper encoder instance
         # The encoder MUST be instantiated per connection to use the correct GPU

@@ -1,8 +1,3 @@
-# This code was originally in simul_whisper/transcriber/simul_whisper.py . It is adapted a lot for SimulStreaming.
-
-from dataclasses import dataclass, field
-from typing import Literal
-
 @dataclass
 class AlignAttConfig():
     eval_data_path: str = "tmp"
@@ -14,7 +9,7 @@ class AlignAttConfig():
     never_fire: bool = False
     language: str = field(default="zh")
     nonspeech_prob: float = 0.5
-    audio_min_len: float = 1.0
+    audio_min_len: float = 0.5  # Changed default from 1.0 to 0.5 for faster response
     decoder_type: Literal["greedy","beam"] = "greedy"
     beam_size: int = 5
     task: Literal["transcribe","translate"] = "transcribe"
@@ -22,4 +17,3 @@ class AlignAttConfig():
     init_prompt: str = field(default=None)
     static_init_prompt: str = field(default=None)
     max_context_tokens: int = field(default=None)
-    

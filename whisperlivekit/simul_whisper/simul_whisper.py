@@ -306,34 +306,35 @@ class PaddedAlignAttWhisper:
 
     def segments_len(self):
         segments_len = sum(s.shape[0] for s in self.segments) / 16000
+        logger.info(f"📝 segments_len: {segments_len}, segments count: {len(self.segments)}")
         return segments_len
 
     def _apply_minseglen(self):
         segments_len = self.segments_len()
-        logger.debug(f"_apply_minseglen: segments_len={segments_len}, min_len={self.cfg.audio_min_len}")
+        logger.info(f"📝 _apply_minseglen: segments_len={segments_len}, min_len={self.cfg.audio_min_len}")
         # wait for long enough audio to start
         if segments_len < self.cfg.audio_min_len: 
-            logger.debug("waiting for next segment")
+            logger.info("📝 waiting for next segment")
             return False
         return True
 
     def insert_audio(self, segment=None):
-        logger.debug(f"insert_audio called with segment: {segment is not None}, segments count before: {len(self.segments)}")
+        logger.info(f"📝 insert_audio called with segment: {segment is not None}, segments count before: {len(self.segments)}")
         if segment is not None:
             self.segments.append(segment)
-            logger.debug(f"Added segment, new segments count: {len(self.segments)}, segment shape: {segment.shape if hasattr(segment, 'shape') else 'N/A'}")
+            logger.info(f"📝 Added segment, new segments count: {len(self.segments)}, segment shape: {segment.shape if hasattr(segment, 'shape') else 'N/A'}")
 
         removed_len = 0
         # len of audio is bigger than buffer_len. Going to remove the first segment
         segments_len = self.segments_len()
-        logger.debug(f"Current segments_len: {segments_len}, max_len: {self.cfg.audio_max_len}")
+        logger.info(f"📝 Current segments_len: {segments_len}, max_len: {self.cfg.audio_max_len}")
         while len(self.segments) > 1 and segments_len > self.cfg.audio_max_len:
             removed_len = self.segments[0].shape[0] / 16000
             segments_len -= removed_len
             self.last_attend_frame -= int(TOKENS_PER_SECOND*removed_len)
             self.cumulative_time_offset += removed_len  # Track cumulative time removed
             self.segments = self.segments[1:]
-            logger.debug(f"remove segments: {len(self.segments)} {len(self.tokens)}, cumulative offset: {self.cumulative_time_offset:.2f}s")
+            logger.info(f"📝 remove segments: {len(self.segments)} {len(self.tokens)}, cumulative offset: {self.cumulative_time_offset:.2f}s")
             if len(self.tokens) > 1:
                 self.context.append_token_ids(self.tokens[1][0,:].tolist())
                 self.tokens = [self.initial_tokens] + self.tokens[2:]
@@ -391,12 +392,12 @@ class PaddedAlignAttWhisper:
     def infer(self, is_last=False):
         new_segment = True
         if len(self.segments) == 0:
-            logger.debug("No segments, nothing to do")
+            logger.info("📝 No segments, nothing to do")
             return []
-        logger.debug(f"Segments count: {len(self.segments)}, segments_len: {self.segments_len()}")
+        logger.info(f"📝 Segments count: {len(self.segments)}, segments_len: {self.segments_len()}")
         if not self._apply_minseglen():
-            logger.debug(f"applied minseglen {self.cfg.audio_min_len} > {self.segments_len()}.")
-            input_segments = torch.cat(self.segments, dim=0)
+            logger.info(f"📝 applied minseglen {self.cfg.audio_min_len} > {self.segments_len()}.")
+            # Return empty list instead of processing
             return []
 
         # input_segments is concatenation of audio, it's one array

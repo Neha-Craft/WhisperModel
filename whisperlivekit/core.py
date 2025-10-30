@@ -104,7 +104,6 @@ class TranscriptionEngine:
                     "beams": 1,
                     "decoder_type": None,
                     "audio_max_len": 20.0,
-                    "audio_min_len": 0.5,  # Reduce minimum audio length to 0.5 seconds for faster response
                     "cif_ckpt_path": None,
                     "never_fire": False,
                     "init_prompt": None,
@@ -118,6 +117,9 @@ class TranscriptionEngine:
                 # CRITICAL: Pass GPU device info to SimulStreamingASR
                 simulstreaming_params['gpu_id'] = self.gpu_id
                 simulstreaming_params['device'] = self.device
+                
+                # Log the audio_min_len value being passed
+                logger.info(f"📝 Creating SimulStreamingASR with audio_min_len={simulstreaming_params.get('audio_min_len', 'NOT_SET')}")
                 
                 self.tokenizer = None        
                 self.asr = SimulStreamingASR(
@@ -137,7 +139,6 @@ class TranscriptionEngine:
                     "buffer_trimming": "segment",
                     "confidence_validation": False,
                     "buffer_trimming_sec": 15,
-                    "audio_min_len": 0.5,  # Reduce minimum audio length to 0.5 seconds for faster response
                 }
                 whisperstreaming_params = update_with_kwargs(whisperstreaming_params, kwargs)
                 

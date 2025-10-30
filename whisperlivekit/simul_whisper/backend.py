@@ -282,13 +282,13 @@ class SimulStreamingASR():
                 
                 # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
                 if self.gpu_id is not None:
-                    # CTranslate2 expects GPU index as integer, not 'cuda:X'
+                    # CTranslate2 expects device_index as list of integers for specific GPUs
                     fw_device = 'cuda'
-                    fw_device_index = self.gpu_id
-                    logger.info(f"Faster-Whisper encoder using GPU {self.gpu_id}")
+                    fw_device_index = [self.gpu_id]  # Must be a list!
+                    logger.info(f"🎯 Faster-Whisper encoder targeting GPU {self.gpu_id}")
                 else:
                     fw_device = 'auto'
-                    fw_device_index = 0
+                    fw_device_index = [0]  # Default to first GPU
                     logger.info("Faster-Whisper encoder using auto device")
                 
                 self.fw_encoder = WhisperModel(
@@ -297,6 +297,7 @@ class SimulStreamingASR():
                     device_index=fw_device_index,
                     compute_type='auto',
                 )
+                logger.info(f"✅ Faster-Whisper encoder loaded on GPU {fw_device_index}")
                 self.fast_encoder = True
 
         self.models = [self.load_model() for i in range(self.preload_model_count)]
@@ -310,15 +311,19 @@ class SimulStreamingASR():
             custom_alignment_heads=self.custom_alignment_heads
             )
         
-        # Move model to assigned GPU device
+        # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
         if self.device is not None:
             whisper_model = whisper_model.to(self.device)
-            logger.info(f"✅ Loaded Whisper model on {self.device} (GPU {self.gpu_id if self.gpu_id is not None else 'default'})")
+            logger.info(f"✅ Loaded Whisper decoder model on {self.device} (GPU {self.gpu_id if self.gpu_id is not None else 'default'})")
             
             # Log GPU memory after model load
             if torch.cuda.is_available() and self.gpu_id is not None:
                 allocated = torch.cuda.memory_allocated(self.gpu_id) / (1024**3)
-                logger.info(f"📊 GPU {self.gpu_id} memory after model load: {allocated:.2f} GB")
+                logger.info(f"📊 GPU {self.gpu_id} memory after decoder load: {allocated:.2f} GB")
+        
+        # Also log Faster-Whisper encoder GPU assignment
+        if self.fw_encoder:
+            logger.info(f"📊 Faster-Whisper encoder device info: {self.fw_encoder.device}")
         
         warmup_audio = load_file(self.warmup_file)
         if warmup_audio is not None:

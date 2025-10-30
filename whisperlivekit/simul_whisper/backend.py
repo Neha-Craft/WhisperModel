@@ -272,12 +272,20 @@ class SimulStreamingOnlineProcessor:
     def warmup(self, audio, init_prompt=""):
         """Warmup the SimulStreaming model."""
         try:
+            logger.info(f"Starting warmup with audio shape: {audio.shape if hasattr(audio, 'shape') else 'unknown'}")
+            logger.info(f"Audio device: {audio.device if hasattr(audio, 'device') else 'N/A'}, Model device: {self.model.device if hasattr(self.model, 'device') else 'N/A'}")
+            
             self.model.insert_audio(audio)
+            logger.info("Audio inserted successfully during warmup")
+            
             self.model.infer(True)
+            logger.info("Inference completed successfully during warmup")
+            
             self.model.refresh_segment(complete=True)
             logger.info("SimulStreaming model warmed up successfully")
         except Exception as e:
-            logger.exception(f"SimulStreaming warmup failed: {e}")
+            logger.error(f"⚠️ SimulStreaming warmup failed: {e}")
+            logger.exception("Warmup exception details:")
 
     def __del__(self):
         # free the model and add a new model to stack.

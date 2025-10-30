@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         num_gpus = torch.cuda.device_count()
         models_per_gpu = args.preload_model_count if args.preload_model_count > 0 else 1
         
-        logger.info(f"🚀 PRELOADING MODELS: {models_per_gpu} models × {num_gpus} GPUs")
+        logger.info(f"🚀 Scheduling PRELOADING of {models_per_gpu} models × {num_gpus} GPUs in background")
         
         try:
             from whisperlivekit.simul_whisper.backend import global_model_pool, create_model_loader_for_gpu
@@ -77,16 +77,32 @@ async def lifespan(app: FastAPI):
                 loaders[gpu_id] = create_model_loader_for_gpu(model_args, gpu_id)
                 logger.info(f"✅ Model loader created for GPU {gpu_id}")
             
-            # Preload models using the loaders
+            # Preload models using the loaders in background task
             def preload_for_gpu(gpu_id):
                 return loaders[gpu_id](gpu_id)
             
-            global_model_pool.preload_models(num_gpus, models_per_gpu, preload_for_gpu)
-            logger.info(f"🎉 Model preloading complete! All GPUs ready.")
+            # Schedule preloading in background to avoid blocking server startup
+            import asyncio
+            import threading
+            
+            def background_preload():
+                try:
+                    logger.info("🔄 Starting background model preloading...")
+                    global_model_pool.preload_models(num_gpus, models_per_gpu, preload_for_gpu)
+                    logger.info(f"🎉 Background model preloading complete! All GPUs ready.")
+                except Exception as e:
+                    logger.error(f"❌ Background model preloading failed: {e}")
+                    logger.exception("Preload exception:")
+                    logger.warning("⚠️ Models will load on-demand (slow!) for first connections")
+            
+            # Start preloading in background thread
+            preload_thread = threading.Thread(target=background_preload, daemon=True)
+            preload_thread.start()
+            logger.info("🚀 Background model preloading started")
             
         except Exception as e:
-            logger.error(f"❌ Model preloading failed: {e}")
-            logger.exception("Preload exception:")
+            logger.error(f"❌ Model preloading setup failed: {e}")
+            logger.exception("Preload setup exception:")
             logger.warning("⚠️ Server will continue but models will load on-demand (slow!)")
     else:
         if args.backend == "simulstreaming":

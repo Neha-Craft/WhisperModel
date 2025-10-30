@@ -128,3 +128,4 @@ nllb-200-distilled-600M-ctranslate2/*
 whisper.log
 test_gpu_allocation.py
 debug_test.py
+verify_fixes.py

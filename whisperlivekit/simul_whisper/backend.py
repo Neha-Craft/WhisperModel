@@ -115,13 +115,15 @@ class GlobalModelPool:
         Returns None if no models available for that GPU.
         """
         with self.pool_lock:
+            logger.info(f"🔍 Requesting model for GPU {gpu_id}. Pool state: {self.get_pool_stats()}")
+            
             if gpu_id not in self.models_by_gpu or len(self.models_by_gpu[gpu_id]) == 0:
-                logger.warning(f"No preloaded models available for GPU {gpu_id}")
+                logger.warning(f"⚠️ No preloaded models available for GPU {gpu_id}")
                 return None
             
             model_tuple = self.models_by_gpu[gpu_id].pop()
             remaining = len(self.models_by_gpu[gpu_id])
-            logger.info(f"📤 Popped model from GPU {gpu_id} pool ({remaining} models remaining)")
+            logger.info(f"✅ Popped model from GPU {gpu_id} pool ({remaining} models remaining). New pool state: {self.get_pool_stats()}")
             return model_tuple
     
     def return_model(self, gpu_id: int, model_tuple: Tuple):
@@ -180,6 +182,11 @@ class SimulStreamingOnlineProcessor:
         """
         if silence_duration < 5:
             gap_silence = torch.zeros(int(16000*silence_duration))
+            
+            # CRITICAL FIX: Move silence tensor to the correct GPU device
+            if hasattr(self.model, 'device') and self.model.device is not None:
+                gap_silence = gap_silence.to(self.model.device)
+            
             self.model.insert_audio(gap_silence)
             # self.global_time_offset += silence_duration
         else:
@@ -194,6 +201,12 @@ class SimulStreamingOnlineProcessor:
             
         # Convert numpy array to torch tensor
         audio_tensor = torch.from_numpy(audio).float()
+        
+        # CRITICAL FIX: Move tensor to the correct GPU device  
+        # This prevents "cpu tensor?" Triton errors on GPUs 1-3
+        if hasattr(self.model, 'device') and self.model.device is not None:
+            audio_tensor = audio_tensor.to(self.model.device)
+        
         self.end = audio_stream_end_time #Only to be aligned with what happens in whisperstreaming backend.
         self.model.insert_audio(audio_tensor)
 

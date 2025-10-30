@@ -311,20 +311,19 @@ async def websocket_endpoint(websocket: WebSocket):
         performance_monitor.record_engine_loaded(connection_id)
         logger.info(f"Connection {connection_id}: TranscriptionEngine loaded ({(engine_time - alloc_time)*1000:.0f}ms)")
         
-        audio_processor = AudioProcessor(
-            transcription_engine=transcription_engine,
-        )
-        processor_time = time.time()
-        performance_monitor.record_processor_created(connection_id)
-        logger.info(f"Connection {connection_id}: AudioProcessor created ({(processor_time - engine_time)*1000:.0f}ms)")
+        # CRITICAL FIX: Defer AudioProcessor creation to avoid blocking event loop
+        logger.info(f"Connection {connection_id}: Deferring AudioProcessor creation...")
+        audio_processor = None  # Will be created on first audio chunk
+        audio_processor_engine = transcription_engine  # Store for later creation
         
-        total_time = processor_time - start_time
-        logger.info(f"Connection {connection_id}: TOTAL setup time: {total_time*1000:.0f}ms (GPU {gpu_id})")
+        total_time = engine_time - start_time
+        logger.info(f"Connection {connection_id}: Initial setup time: {total_time*1000:.0f}ms (GPU {gpu_id})")
         
         # Track active connection
         active_connections[connection_id] = {
             'gpu_id': gpu_id,
             'audio_processor': audio_processor,
+            'audio_processor_engine': audio_processor_engine,  # Store for deferred creation
             'websocket': websocket
         }
         
@@ -341,12 +340,14 @@ async def websocket_endpoint(websocket: WebSocket):
             })
         except Exception as e:
             logger.warning(f"Connection {connection_id}: Failed to send ready status: {e}")
-                
-        results_generator = await audio_processor.create_tasks()
-        websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, connection_id))
+        
+        # CRITICAL FIX: Defer results_generator creation until first audio chunk
+        results_generator = None
+        websocket_task = None
         
         logger.info(f"Connection {connection_id}: Ready to receive audio")
 
+        first_audio_chunk = True
         while True:
             message = await websocket.receive_bytes()
             
@@ -355,6 +356,20 @@ async def websocket_endpoint(websocket: WebSocket):
             performance_monitor.record_audio_chunk(connection_id)
             
             logger.debug(f"Connection {connection_id}: Received audio chunk ({len(message)} bytes)")
+            
+            # CRITICAL FIX: Create AudioProcessor and start tasks on first audio chunk
+            if first_audio_chunk:
+                logger.info(f"Connection {connection_id}: First audio chunk received, creating AudioProcessor...")
+                audio_processor = AudioProcessor(
+                    transcription_engine=audio_processor_engine,
+                )
+                # Update the active connection reference
+                active_connections[connection_id]['audio_processor'] = audio_processor
+                
+                results_generator = await audio_processor.create_tasks()
+                websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, connection_id))
+                first_audio_chunk = False
+                logger.info(f"Connection {connection_id}: AudioProcessor and tasks created successfully")
             
             await audio_processor.process_audio(message)
     except KeyError as e:

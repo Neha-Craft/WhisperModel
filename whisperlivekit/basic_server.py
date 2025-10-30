@@ -30,8 +30,9 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 80)
     gpu_manager.log_all_gpu_stats()
     
-    # CRITICAL FIX: Preload models across all GPUs during startup
-    if args.backend == "simulstreaming" and torch.cuda.is_available():
+    # CRITICAL FIX: Model preloading causes server startup deadlock
+    # Models will be loaded on-demand instead (first connection takes ~60s, subsequent are instant)
+    if args.backend == "simulstreaming" and torch.cuda.is_available() and False:  # DISABLED
         num_gpus = torch.cuda.device_count()
         models_per_gpu = args.preload_model_count if args.preload_model_count > 0 else 1
         
@@ -81,6 +82,10 @@ async def lifespan(app: FastAPI):
             logger.error(f"❌ Model preloading failed: {e}")
             logger.exception("Preload exception:")
             logger.warning("⚠️ Server will continue but models will load on-demand (slow!)")
+    else:
+        if args.backend == "simulstreaming":
+            logger.warning("⚠️ Model preloading DISABLED - models will load on-demand for each connection")
+            logger.warning("⚠️ First connection will take ~60 seconds to load model, subsequent connections are instant")
     
     yield
     # Cleanup on shutdown

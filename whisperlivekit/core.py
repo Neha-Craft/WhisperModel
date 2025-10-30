@@ -104,7 +104,7 @@ class TranscriptionEngine:
                     "beams": 1,
                     "decoder_type": None,
                     "audio_max_len": 20.0,
-                    "audio_min_len": 0.0,
+                    "audio_min_len": 0.5,  # Reduce minimum audio length to 0.5 seconds for faster response
                     "cif_ckpt_path": None,
                     "never_fire": False,
                     "init_prompt": None,
@@ -124,11 +124,20 @@ class TranscriptionEngine:
                     **transcription_common_params, **simulstreaming_params
                 )
             else:
-                
+                transcription_common_params = {
+                    "model_path": getattr(self.args, 'model_path', None),  # FIXED: Use getattr to avoid AttributeError
+                    "model_size": self.args.model_size,
+                    "min_chunk_size": self.args.min_chunk_size,
+                    "lan": self.args.lan,
+                    "task": self.args.task,
+                    "warmup_file": self.args.warmup_file,
+                    "preload_model_count": 0,  # Don't preload in ASR __init__
+                }
                 whisperstreaming_params = {
                     "buffer_trimming": "segment",
                     "confidence_validation": False,
                     "buffer_trimming_sec": 15,
+                    "audio_min_len": 0.5,  # Reduce minimum audio length to 0.5 seconds for faster response
                 }
                 whisperstreaming_params = update_with_kwargs(whisperstreaming_params, kwargs)
                 
@@ -194,6 +203,7 @@ def online_factory(args, asr):
   
   
 def online_diarization_factory(args, diarization_backend):
+    online = None
     if args.diarization_backend == "diart":
         online = diarization_backend
         # Not the best here, since several user/instances will share the same backend, but diart is not SOTA anymore and sortformer is recommended

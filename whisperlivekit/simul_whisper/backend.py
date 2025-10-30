@@ -486,6 +486,13 @@ class SimulStreamingASR():
             model_tuple = global_model_pool.get_model(self.gpu_id)
             if model_tuple is not None:
                 logger.info(f"✅ Got preloaded model from global pool for GPU {self.gpu_id}")
+                # Log model device information
+                whisper_model, fw_encoder = model_tuple
+                if hasattr(whisper_model, 'device'):
+                    logger.info(f"📝 Preloaded model device: {whisper_model.device}")
+                if fw_encoder and hasattr(fw_encoder, 'model'):
+                    encoder_device = getattr(fw_encoder.model, 'device', 'unknown')
+                    logger.info(f"📝 Preloaded encoder device: {encoder_device}")
                 return model_tuple
             else:
                 # Pool exhausted - create new model on-demand

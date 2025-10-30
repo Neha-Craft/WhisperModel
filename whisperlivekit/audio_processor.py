@@ -265,10 +265,11 @@ class AudioProcessor:
                 cumulative_pcm_duration_stream_time += duration_this_chunk
                 stream_time_end_of_current_pcm = cumulative_pcm_duration_stream_time
 
+                logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: Audio data shape: {pcm_array.shape if hasattr(pcm_array, 'shape') else 'N/A'}, dtype: {pcm_array.dtype if hasattr(pcm_array, 'dtype') else 'N/A'}, duration: {duration_this_chunk:.3f}s")
                 self.transcription.insert_audio_chunk(pcm_array, stream_time_end_of_current_pcm)
                 new_tokens, current_audio_processed_upto = await asyncio.to_thread(self.transcription.process_iter)
                 
-                logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: Got {len(new_tokens)} new tokens")
+                logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: Got {len(new_tokens)} new tokens, current_audio_processed_upto: {current_audio_processed_upto}")
                 
                 _buffer_transcript = self.transcription.get_buffer()
                 buffer_text = _buffer_transcript.text
@@ -474,6 +475,9 @@ class AudioProcessor:
                 if not state.tokens and not buffer_transcription and not buffer_diarization:
                     response_status = "no_audio_detected"
                     lines = []
+                    logger.info(f"[{self.processor_id}] results_formatter: No audio detected - tokens={len(state.tokens)}, buffer_transcription={bool(buffer_transcription)}, buffer_diarization={bool(buffer_diarization)}")
+                    logger.info(f"[{self.processor_id}] results_formatter: buffer_transcription text: '{buffer_transcription.text[:100] if buffer_transcription else 'None'}'")
+                    logger.info(f"[{self.processor_id}] results_formatter: buffer_diarization text: '{buffer_diarization[:100] if buffer_diarization else 'None'}'")
                 elif not lines:
                     lines = [Line(
                         speaker=1,
@@ -601,8 +605,7 @@ class AudioProcessor:
 
         if not message:
             logger.info("Empty audio message received, initiating stop sequence.")
-            self.is_stopping = True
-             
+            self.is_stopping = True             
             if self.transcription_queue:
                 await self.transcription_queue.put(SENTINEL)
 

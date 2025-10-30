@@ -310,6 +310,7 @@ class PaddedAlignAttWhisper:
 
     def _apply_minseglen(self):
         segments_len = self.segments_len()
+        logger.debug(f"_apply_minseglen: segments_len={segments_len}, min_len={self.cfg.audio_min_len}")
         # wait for long enough audio to start
         if segments_len < self.cfg.audio_min_len: 
             logger.debug("waiting for next segment")
@@ -317,12 +318,15 @@ class PaddedAlignAttWhisper:
         return True
 
     def insert_audio(self, segment=None):
+        logger.debug(f"insert_audio called with segment: {segment is not None}, segments count before: {len(self.segments)}")
         if segment is not None:
             self.segments.append(segment)
+            logger.debug(f"Added segment, new segments count: {len(self.segments)}, segment shape: {segment.shape if hasattr(segment, 'shape') else 'N/A'}")
 
         removed_len = 0
         # len of audio is bigger than buffer_len. Going to remove the first segment
         segments_len = self.segments_len()
+        logger.debug(f"Current segments_len: {segments_len}, max_len: {self.cfg.audio_max_len}")
         while len(self.segments) > 1 and segments_len > self.cfg.audio_max_len:
             removed_len = self.segments[0].shape[0] / 16000
             segments_len -= removed_len
@@ -389,6 +393,7 @@ class PaddedAlignAttWhisper:
         if len(self.segments) == 0:
             logger.debug("No segments, nothing to do")
             return []
+        logger.debug(f"Segments count: {len(self.segments)}, segments_len: {self.segments_len()}")
         if not self._apply_minseglen():
             logger.debug(f"applied minseglen {self.cfg.audio_min_len} > {self.segments_len()}.")
             input_segments = torch.cat(self.segments, dim=0)

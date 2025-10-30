@@ -448,17 +448,21 @@ class SimulStreamingASR():
         SimulStreaming cannot share the same backend because it uses global forward hooks on the attention layers.
         Therefore, each user requires a separate model instance, which can be memory-intensive. To maintain speed, we preload the models into memory.
         
+        IMPORTANT: Each connection MUST get its OWN model instance. Models are NEVER shared or returned to pool.
+        The pool exists only to provide fast initial models during server startup - once exhausted, models are created on-demand.
+        
         Returns:
             Tuple of (whisper_model, fw_encoder)
         """
-        # CRITICAL FIX: Get model from global pool based on assigned GPU
+        # Try to get preloaded model first (fast startup)
         if self.gpu_id is not None:
             model_tuple = global_model_pool.get_model(self.gpu_id)
             if model_tuple is not None:
                 logger.info(f"✅ Got preloaded model from global pool for GPU {self.gpu_id}")
                 return model_tuple
             else:
-                logger.warning(f"⚠️ No preloaded model for GPU {self.gpu_id}, loading on-demand (will be slow!)")
+                # Pool exhausted - create new model on-demand
+                logger.info(f"ℹ️ Preload pool empty for GPU {self.gpu_id}, creating new model on-demand...")
                 return self.load_model()
         else:
             # Fallback: load on-demand

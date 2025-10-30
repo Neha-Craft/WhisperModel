@@ -1,3 +1,6 @@
+from dataclasses import dataclass, field
+from typing import Literal, Optional
+
 @dataclass
 class AlignAttConfig():
     eval_data_path: str = "tmp"
@@ -14,6 +17,6 @@ class AlignAttConfig():
     beam_size: int = 5
     task: Literal["transcribe","translate"] = "transcribe"
     tokenizer_is_multilingual: bool = False
-    init_prompt: str = field(default=None)
-    static_init_prompt: str = field(default=None)
-    max_context_tokens: int = field(default=None)
+    init_prompt: Optional[str] = field(default=None)
+    static_init_prompt: Optional[str] = field(default=None)
+    max_context_tokens: Optional[int] = field(default=None)

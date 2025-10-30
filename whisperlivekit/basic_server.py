@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from whisperlivekit import TranscriptionEngine, AudioProcessor, get_inline_ui_html, parse_args
 from whisperlivekit.gpu_manager import gpu_manager
 from whisperlivekit.performance_monitor import performance_monitor
@@ -9,6 +10,7 @@ import asyncio
 import logging
 import uuid
 import time
+import torch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -27,6 +29,59 @@ async def lifespan(app: FastAPI):
     logger.info("WhisperLiveKit Server Starting")
     logger.info("=" * 80)
     gpu_manager.log_all_gpu_stats()
+    
+    # CRITICAL FIX: Preload models across all GPUs during startup
+    if args.backend == "simulstreaming" and torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        models_per_gpu = args.preload_model_count if args.preload_model_count > 0 else 1
+        
+        logger.info(f"🚀 PRELOADING MODELS: {models_per_gpu} models × {num_gpus} GPUs")
+        
+        try:
+            from whisperlivekit.simul_whisper.backend import global_model_pool, create_model_loader_for_gpu
+            
+            # Build args dict for model loading
+            model_args = {
+                "disable_fast_encoder": False,
+                "custom_alignment_heads": None,
+                "frame_threshold": 25,
+                "beams": 1,
+                "decoder_type": None,
+                "audio_max_len": 20.0,
+                "audio_min_len": 0.0,
+                "cif_ckpt_path": None,
+                "never_fire": False,
+                "init_prompt": None,
+                "static_init_prompt": None,
+                "max_context_tokens": None,
+                "model_path": args.model,
+                "model_size": args.model_size,
+                "min_chunk_size": args.min_chunk_size,
+                "lan": args.lan,
+                "task": args.task,
+                "warmup_file": args.warmup_file,
+                "preload_model_count": 0,  # Don't preload in ASR __init__
+            }
+            
+            # Create model loaders for each GPU
+            logger.info("🔧 Creating model loaders for each GPU...")
+            loaders = {}
+            for gpu_id in range(num_gpus):
+                loaders[gpu_id] = create_model_loader_for_gpu(model_args, gpu_id)
+                logger.info(f"✅ Model loader created for GPU {gpu_id}")
+            
+            # Preload models using the loaders
+            def preload_for_gpu(gpu_id):
+                return loaders[gpu_id](gpu_id)
+            
+            global_model_pool.preload_models(num_gpus, models_per_gpu, preload_for_gpu)
+            logger.info(f"🎉 Model preloading complete! All GPUs ready.")
+            
+        except Exception as e:
+            logger.error(f"❌ Model preloading failed: {e}")
+            logger.exception("Preload exception:")
+            logger.warning("⚠️ Server will continue but models will load on-demand (slow!)")
+    
     yield
     # Cleanup on shutdown
     logger.info("Server shutting down, cleaning up GPU allocations...")

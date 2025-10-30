@@ -23,9 +23,17 @@ git pull origin master
 echo "Reinstalling package..."
 pip install -e . --force-reinstall --no-deps
 
-# Start server
-echo "Starting server..."
-nohup whisperlivekit-server --model medium --host 0.0.0.0 --port 8000 > whisper.log 2>&1 &
+# Start server with optimal settings:
+# - medium.en: English-only model (no Hindi/Chinese/Urdu detection)
+# - --lan en: Force English language
+# - --preload-model-count 2: Preload 2 models per GPU (2x4=8 total models for instant connections)
+echo "Starting server with optimized multi-GPU configuration..."
+nohup whisperlivekit-server \
+  --model medium.en \
+  --lan en \
+  --preload-model-count 2 \
+  --host 0.0.0.0 \
+  --port 8000 > whisper.log 2>&1 &
 
 echo "Server started. PID: $!"
 echo "Waiting 5 seconds for initialization..."

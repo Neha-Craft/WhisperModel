@@ -1,9 +1,11 @@
 import sys
 import numpy as np
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import logging
 import platform
+import threading
+import sys
 from whisperlivekit.timed_objects import ASRToken, Transcript, ChangeSpeaker
 from whisperlivekit.warmup import load_file
 from .whisper import load_model, tokenizer
@@ -51,6 +53,95 @@ def model_path_and_type(model_path):
                 elif file.suffix.lower() == '.pt':
                     pt_path = file
     return pt_path, compatible_whisper_mlx, compatible_faster_whisper
+
+
+class GlobalModelPool:
+    """
+    Global singleton pool for preloaded Whisper models distributed across GPUs.
+    Models are preloaded during server startup to avoid 2-minute load times on connection.
+    """
+    _instance = None
+    _lock = threading.Lock()
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        # Prevent re-initialization
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+        
+        self._initialized = True
+        self.pool_lock = threading.Lock()
+        # Dictionary: gpu_id -> list of (whisper_model, fw_encoder) tuples
+        self.models_by_gpu: Dict[int, List[Tuple]] = {}
+        logger.info("GlobalModelPool initialized (empty)")
+    
+    def preload_models(self, num_gpus: int, models_per_gpu: int, model_loader_fn):
+        """
+        Preload models across all GPUs during server startup.
+        
+        Args:
+            num_gpus: Number of available CUDA GPUs
+            models_per_gpu: Number of models to preload per GPU
+            model_loader_fn: Function(gpu_id) -> (whisper_model, fw_encoder) that loads a model for specific GPU
+        """
+        with self.pool_lock:
+            logger.info(f"🚀 Starting model preload: {models_per_gpu} models × {num_gpus} GPUs = {num_gpus * models_per_gpu} total models")
+            
+            for gpu_id in range(num_gpus):
+                self.models_by_gpu[gpu_id] = []
+                logger.info(f"📦 Preloading {models_per_gpu} models for GPU {gpu_id}...")
+                
+                for i in range(models_per_gpu):
+                    try:
+                        model_tuple = model_loader_fn(gpu_id)
+                        self.models_by_gpu[gpu_id].append(model_tuple)
+                        logger.info(f"✅ Preloaded model {i+1}/{models_per_gpu} for GPU {gpu_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to preload model {i+1} for GPU {gpu_id}: {e}")
+                        logger.exception("Preload exception:")
+            
+            total_loaded = sum(len(models) for models in self.models_by_gpu.values())
+            logger.info(f"🎉 Model preload complete: {total_loaded} models ready across {num_gpus} GPUs")
+    
+    def get_model(self, gpu_id: int) -> Optional[Tuple]:
+        """
+        Get a preloaded model for the specified GPU.
+        Returns None if no models available for that GPU.
+        """
+        with self.pool_lock:
+            if gpu_id not in self.models_by_gpu or len(self.models_by_gpu[gpu_id]) == 0:
+                logger.warning(f"No preloaded models available for GPU {gpu_id}")
+                return None
+            
+            model_tuple = self.models_by_gpu[gpu_id].pop()
+            remaining = len(self.models_by_gpu[gpu_id])
+            logger.info(f"📤 Popped model from GPU {gpu_id} pool ({remaining} models remaining)")
+            return model_tuple
+    
+    def return_model(self, gpu_id: int, model_tuple: Tuple):
+        """
+        Return a model back to the pool for reuse.
+        """
+        with self.pool_lock:
+            if gpu_id not in self.models_by_gpu:
+                self.models_by_gpu[gpu_id] = []
+            self.models_by_gpu[gpu_id].append(model_tuple)
+            logger.info(f"📥 Returned model to GPU {gpu_id} pool ({len(self.models_by_gpu[gpu_id])} models available)")
+    
+    def get_pool_stats(self) -> Dict[int, int]:
+        """Get current model counts per GPU."""
+        with self.pool_lock:
+            return {gpu_id: len(models) for gpu_id, models in self.models_by_gpu.items()}
+
+
+# Global singleton instance
+global_model_pool = GlobalModelPool()
 
 
 class SimulStreamingOnlineProcessor:
@@ -300,7 +391,10 @@ class SimulStreamingASR():
                 logger.info(f"✅ Faster-Whisper encoder loaded on GPU {fw_device_index}")
                 self.fast_encoder = True
 
-        self.models = [self.load_model() for i in range(self.preload_model_count)]
+        # CRITICAL FIX: Don't preload in __init__ - models are preloaded globally during server startup
+        # Each connection will get a model from the global pool based on its assigned GPU
+        self.models = []  # Empty - using global pool instead
+        logger.info(f"SimulStreamingASR initialized for GPU {self.gpu_id}. Using global model pool.")
 
 
     def load_model(self):
@@ -377,10 +471,19 @@ class SimulStreamingASR():
         Returns:
             Tuple of (whisper_model, fw_encoder)
         """
-        if len(self.models) == 0:
-            self.models.append(self.load_model())
-        model_tuple = self.models.pop()
-        return model_tuple
+        # CRITICAL FIX: Get model from global pool based on assigned GPU
+        if self.gpu_id is not None:
+            model_tuple = global_model_pool.get_model(self.gpu_id)
+            if model_tuple is not None:
+                logger.info(f"✅ Got preloaded model from global pool for GPU {self.gpu_id}")
+                return model_tuple
+            else:
+                logger.warning(f"⚠️ No preloaded model for GPU {self.gpu_id}, loading on-demand (will be slow!)")
+                return self.load_model()
+        else:
+            # Fallback: load on-demand
+            logger.warning("⚠️ No GPU assigned, loading model on-demand")
+            return self.load_model()
 
     def new_model_to_stack(self):
         self.models.append(self.load_model())
@@ -402,3 +505,32 @@ class SimulStreamingASR():
         Warmup is done directly in load_model
         """
         pass
+
+
+def create_model_loader_for_gpu(args_dict, gpu_id):
+    """
+    Create a function that loads a model for a specific GPU.
+    This is used by GlobalModelPool during server startup preloading.
+    
+    Args:
+        args_dict: Dictionary of arguments for SimulStreamingASR
+        gpu_id: GPU ID to load the model on
+    
+    Returns:
+        Function that returns (whisper_model, fw_encoder) tuple
+    """
+    import copy
+    
+    # Create a temporary ASR instance for this GPU
+    gpu_args = copy.deepcopy(args_dict)
+    gpu_args['gpu_id'] = gpu_id
+    gpu_args['device'] = torch.device(f'cuda:{gpu_id}')
+    gpu_args['preload_model_count'] = 0  # Don't preload in constructor
+    
+    temp_asr = SimulStreamingASR(**gpu_args)
+    
+    def loader_fn(gpu_id_inner):
+        """Inner function that performs the actual model loading."""
+        return temp_asr.load_model()
+    
+    return loader_fn

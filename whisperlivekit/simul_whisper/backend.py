@@ -335,18 +335,18 @@ class SimulStreamingASR():
             
         elif self.model_size is not None:
             model_mapping = {
-                'tiny': './tiny.pt',
-                'base': './base.pt',
-                'small': './small.pt',
-                'medium': './medium.pt',
-                'medium.en': './medium.en.pt',
-                'large-v1': './large-v1.pt',
-                'base.en': './base.en.pt',
-                'small.en': './small.en.pt',
-                'tiny.en': './tiny.en.pt',
-                'large-v2': './large-v2.pt',
-                'large-v3': './large-v3.pt',
-                'large': './large-v3.pt'
+                'tiny': 'tiny',
+                'base': 'base',
+                'small': 'small',
+                'medium': 'medium',
+                'medium.en': 'medium.en',
+                'large-v1': 'large-v1',
+                'base.en': 'base.en',
+                'small.en': 'small.en',
+                'tiny.en': 'tiny.en',
+                'large-v2': 'large-v2',
+                'large-v3': 'large-v3',
+                'large': 'large-v3'
             }
             pt_path = Path(model_mapping.get(self.model_size, f'./{self.model_size}.pt'))
         
@@ -542,6 +542,13 @@ def create_model_loader_for_gpu(args_dict, gpu_id):
     
     def loader_fn(gpu_id_inner):
         """Inner function that performs the actual model loading."""
-        return temp_asr.load_model()
+        # Create a new ASR instance for this specific GPU to avoid device mismatches
+        gpu_args_inner = copy.deepcopy(args_dict)
+        gpu_args_inner['gpu_id'] = gpu_id_inner
+        gpu_args_inner['device'] = torch.device(f'cuda:{gpu_id_inner}')
+        gpu_args_inner['preload_model_count'] = 0
+        
+        asr_inner = SimulStreamingASR(**gpu_args_inner)
+        return asr_inner.load_model()
     
     return loader_fn

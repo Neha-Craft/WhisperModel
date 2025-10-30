@@ -19,6 +19,11 @@ logger.setLevel(logging.DEBUG)
 
 args = parse_args()
 
+# DEBUG: Print argument values
+logger.debug(f"Backend: {args.backend}")
+logger.debug(f"CUDA available: {torch.cuda.is_available()}")
+logger.debug(f"Preload model count: {getattr(args, 'preload_model_count', 'NOT_SET')}")
+
 # Track active connections for cleanup
 active_connections = {}
 
@@ -32,7 +37,8 @@ async def lifespan(app: FastAPI):
     
     # CRITICAL FIX: Model preloading causes server startup deadlock
     # Models will be loaded on-demand instead (first connection takes ~60s, subsequent are instant)
-    if args.backend == "simulstreaming" and torch.cuda.is_available() and False:  # DISABLED
+    logger.debug(f"Checking preloading conditions: backend={args.backend}, cuda_available={torch.cuda.is_available()}, preload_model_count={getattr(args, 'preload_model_count', 'NOT_SET')}")
+    if args.backend == "simulstreaming" and torch.cuda.is_available() and args.preload_model_count > 0:  # ENABLED when preload_model_count > 0
         num_gpus = torch.cuda.device_count()
         models_per_gpu = args.preload_model_count if args.preload_model_count > 0 else 1
         

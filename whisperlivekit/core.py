@@ -110,7 +110,7 @@ class TranscriptionEngine:
                     "init_prompt": None,
                     "static_init_prompt": None,
                     "max_context_tokens": None,
-                    "model_path": './base.pt',
+                    "model_path": None,  # Use model_name instead
                     "preload_model_count": 1,
                 }
                 simulstreaming_params = update_with_kwargs(simulstreaming_params, kwargs)

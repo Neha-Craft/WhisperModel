@@ -52,11 +52,16 @@ class AudioProcessor:
         import uuid
         self.processor_id = str(uuid.uuid4())[:8]
         logger.info(f"🆔 AudioProcessor {self.processor_id} initializing...")
+        logger.debug(f"AudioProcessor init: Checking transcription_engine in kwargs")
         
+        logger.debug(f"AudioProcessor init: Checking transcription_engine in kwargs: {'transcription_engine' in kwargs}")
         if 'transcription_engine' in kwargs and isinstance(kwargs['transcription_engine'], TranscriptionEngine):
             models = kwargs['transcription_engine']
+            logger.debug(f"AudioProcessor init: Using provided transcription_engine")
         else:
+            logger.debug(f"AudioProcessor init: Creating new TranscriptionEngine")
             models = TranscriptionEngine(**kwargs)
+            logger.debug(f"AudioProcessor init: TranscriptionEngine created successfully")
         
         # Audio processing settings
         self.args = models.args
@@ -91,10 +96,10 @@ class AudioProcessor:
         # Models and processing
         self.asr = models.asr
         self.vac_model = models.vac_model
-        if self.args.vac:
-            self.vac = FixedVADIterator(models.vac_model)
-        else:
-            self.vac = None
+        # CRITICAL FIX: Defer VAD initialization to prevent blocking event loop
+        self.vac = None
+        self._vac_initialized = False
+        self._vac_model = models.vac_model if self.args.vac else None
                          
         self.ffmpeg_manager = None
         self.ffmpeg_reader_task = None
@@ -105,7 +110,7 @@ class AudioProcessor:
                 sample_rate=self.sample_rate,
                 channels=self.channels
             )
-            async def handle_ffmpeg_error(error_type: str):
+            def handle_ffmpeg_error(error_type: str):
                 logger.error(f"FFmpeg error: {error_type}")
                 self._ffmpeg_error = error_type
             self.ffmpeg_manager.on_error_callback = handle_ffmpeg_error
@@ -127,9 +132,8 @@ class AudioProcessor:
         self._transcription_initialized = False
         self._models_for_transcription = models.asr if self.args.transcription else None
 
-        if self.args.transcription:
-            self.transcription = online_factory(self.args, models.asr)        
-            self.sep = self.transcription.asr.sep   
+        # CRITICAL FIX: Defer transcription initialization to prevent blocking event loop
+        # Transcription will be initialized on first use in transcription_processor
         if self.args.diarization:
             self.diarization = online_diarization_factory(self.args, models.diarization_model)
         if models.translation_model:
@@ -649,7 +653,13 @@ class AudioProcessor:
         end_of_audio = False
         silence_buffer = None
 
+        # CRITICAL FIX: Lazy initialize VAD to prevent blocking event loop
         if self.args.vac:
+            if not self._vac_initialized:
+                logger.info("⏳ Initializing VAD on first use...")
+                self.vac = FixedVADIterator(self._vac_model)
+                self._vac_initialized = True
+                logger.info("✅ VAD initialized successfully")
             res = self.vac(pcm_array)
 
         if res is not None:

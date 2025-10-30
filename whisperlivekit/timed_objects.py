@@ -183,4 +183,4 @@ class State():
     end_attributed_speaker: float = 0.0
     remaining_time_transcription: float = 0.0
     remaining_time_diarization: float = 0.0
-    beg_loop: Optional[int] = None
+    beg_loop: float = 0.0

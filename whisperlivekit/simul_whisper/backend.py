@@ -365,31 +365,11 @@ class SimulStreamingASR():
                 self.mlx_encoder = load_mlx_encoder(path_or_hf_repo=mlx_model)
                 self.fast_encoder = True
             elif HAS_FASTER_WHISPER and compatible_faster_whisper:
+                # CRITICAL FIX: Don't create shared encoder here - it will come from the global pool per-connection
+                # This prevents OOM errors when preloading multiple models
                 print('Simulstreaming will use Faster Whisper for the encoder.')
-                if self.model_path and compatible_faster_whisper:
-                    fw_model = self.model_path
-                else:
-                    fw_model = self.model_name
-                
-                # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
-                if self.gpu_id is not None:
-                    # CTranslate2 expects GPU index as single integer
-                    fw_device = 'cuda'
-                    fw_device_index = self.gpu_id
-                    logger.info(f"🎯 Faster-Whisper encoder targeting GPU {self.gpu_id}")
-                else:
-                    fw_device = 'auto'
-                    fw_device_index = 0
-                    logger.info("Faster-Whisper encoder using auto device")
-                
-                self.fw_encoder = WhisperModel(
-                    fw_model,
-                    device=fw_device,
-                    device_index=fw_device_index,
-                    compute_type='auto',
-                )
-                logger.info(f"✅ Faster-Whisper encoder loaded on GPU {fw_device_index}")
                 self.fast_encoder = True
+                logger.info(f"Faster-Whisper encoder will be loaded per-connection from global pool (GPU {self.gpu_id})")
 
         # CRITICAL FIX: Don't preload in __init__ - models are preloaded globally during server startup
         # Each connection will get a model from the global pool based on its assigned GPU

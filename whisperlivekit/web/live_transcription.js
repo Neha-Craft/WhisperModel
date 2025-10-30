@@ -216,18 +216,22 @@ function setupWebSocket() {
   return new Promise((resolve, reject) => {
     try {
       websocket = new WebSocket(websocketUrl);
+      console.log("Connecting to:", websocketUrl);
     } catch (error) {
       statusText.textContent = "Invalid WebSocket URL. Please check and try again.";
+      console.error("WebSocket creation failed:", error);
       reject(error);
       return;
     }
 
     websocket.onopen = () => {
+      console.log("✅ WebSocket opened successfully");
       statusText.textContent = "Connected to server.";
       resolve();
     };
 
     websocket.onclose = () => {
+      console.log("WebSocket closed");
       if (userClosing) {
         if (waitingForStop) {
           statusText.textContent = "Processing finalized or connection closed.";
@@ -256,19 +260,27 @@ function setupWebSocket() {
       updateUI();
     };
 
-    websocket.onerror = () => {
+    websocket.onerror = (error) => {
+      console.error("❌ WebSocket error:", error);
       statusText.textContent = "Error connecting to WebSocket.";
       reject(new Error("Error connecting to WebSocket"));
     };
 
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      
       if (data.type === "config") {
+        console.log("📦 Received config:", data);
         serverUseAudioWorklet = !!data.useAudioWorklet;
         statusText.textContent = serverUseAudioWorklet
           ? "Connected. Using AudioWorklet (PCM)."
           : "Connected. Using MediaRecorder (WebM).";
         if (configReadyResolve) configReadyResolve();
+        return;
+      }
+      
+      if (data.type === "status") {
+        console.log("📊 Status update:", data.message);
         return;
       }
 
@@ -315,6 +327,7 @@ function setupWebSocket() {
         false,
         status
       );
+      console.log("📝 Transcription update:", lines.length, "lines, buffer:", buffer_transcription.substring(0, 50));
     };
   });
 }
@@ -562,6 +575,9 @@ async function startRecording() {
       recorderWorker.onmessage = (e) => {
         if (websocket && websocket.readyState === WebSocket.OPEN) {
           websocket.send(e.data.buffer);
+          console.log("📤 Sent audio chunk:", e.data.buffer.byteLength, "bytes");
+        } else {
+          console.warn("⚠️ WebSocket not open, cannot send audio");
         }
       };
 
@@ -586,10 +602,14 @@ async function startRecording() {
         if (websocket && websocket.readyState === WebSocket.OPEN) {
           if (e.data && e.data.size > 0) {
             websocket.send(e.data);
+            console.log("📤 Sent audio chunk:", e.data.size, "bytes");
           }
+        } else {
+          console.warn("⚠️ WebSocket not open, cannot send audio");
         }
       };
       recorder.start(chunkDuration);
+      console.log("🎵 MediaRecorder started, chunk duration:", chunkDuration, "ms");
     }
 
     startTime = Date.now();
@@ -701,19 +721,21 @@ async function toggleRecording() {
       console.log("Waiting for stop, early return");
       return;
     }
-    console.log("Connecting to WebSocket");
     try {
       if (websocket && websocket.readyState === WebSocket.OPEN) {
+        console.log("WebSocket already open, starting recording");
         await configReady;
         await startRecording();
       } else {
+        console.log("Opening WebSocket connection...");
         await setupWebSocket();
+        console.log("WebSocket connected successfully");
         await configReady;
         await startRecording();
       }
     } catch (err) {
       statusText.textContent = "Could not connect to WebSocket or access mic. Aborted.";
-      console.error(err);
+      console.error("Connection error:", err);
     }
   } else {
     console.log("Stopping recording");

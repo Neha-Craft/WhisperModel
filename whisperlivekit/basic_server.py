@@ -156,20 +156,29 @@ async def prometheus_metrics():
 
 async def handle_websocket_results(websocket, results_generator, connection_id):
     """Consumes results from the audio processor and sends them via WebSocket."""
+    result_count = 0
     try:
+        logger.info(f"Connection {connection_id}: Starting to listen for transcription results...")
         async for response in results_generator:
             # Track first transcription
             performance_monitor.record_first_transcription(connection_id)
             performance_monitor.record_transcription(connection_id)
+            result_count += 1
             
-            await websocket.send_json(response.to_dict())
+            logger.info(f"Connection {connection_id}: Sending transcription result #{result_count}: {response.to_dict()}")
+            try:
+                await websocket.send_json(response.to_dict())
+                logger.info(f"Connection {connection_id}: Successfully sent result #{result_count}")
+            except Exception as send_error:
+                logger.error(f"Connection {connection_id}: Failed to send result #{result_count}: {send_error}")
+                raise
         # when the results_generator finishes it means all audio has been processed
-        logger.info(f"Connection {connection_id}: Results generator finished. Sending 'ready_to_stop' to client.")
+        logger.info(f"Connection {connection_id}: Results generator finished after {result_count} results. Sending 'ready_to_stop' to client.")
         await websocket.send_json({"type": "ready_to_stop"})
     except WebSocketDisconnect:
-        logger.info(f"Connection {connection_id}: WebSocket disconnected while handling results.")
+        logger.info(f"Connection {connection_id}: WebSocket disconnected while handling results (sent {result_count} results).")
     except Exception as e:
-        logger.exception(f"Connection {connection_id}: Error in WebSocket results handler: {e}")
+        logger.exception(f"Connection {connection_id}: Error in WebSocket results handler after {result_count} results: {e}")
 
 
 @app.websocket("/asr")
@@ -189,7 +198,19 @@ async def websocket_endpoint(websocket: WebSocket):
         accept_time = time.time()
         logger.info(f"Connection {connection_id}: WebSocket accepted ({(accept_time - start_time)*1000:.0f}ms)")
         
-        # Send initial status to client
+        # CRITICAL FIX: Send config IMMEDIATELY so client shows "Connected"
+        # This makes the UI responsive while models are loading
+        try:
+            await websocket.send_json({
+                "type": "config", 
+                "useAudioWorklet": bool(args.pcm_input),
+                "connection_id": connection_id,
+                "status": "loading_models"
+            })
+        except Exception as e:
+            logger.warning(f"Connection {connection_id}: Failed to send initial config: {e}")
+        
+        # Send status update
         await websocket.send_json({
             "type": "status",
             "message": "Allocating GPU..."
@@ -250,18 +271,21 @@ async def websocket_endpoint(websocket: WebSocket):
         # Log current GPU stats
         gpu_manager.log_all_gpu_stats()
 
+        # Send final ready status with GPU info
         try:
             await websocket.send_json({
-                "type": "config", 
-                "useAudioWorklet": bool(args.pcm_input),
+                "type": "status",
+                "message": "Ready to transcribe",
                 "gpu_id": gpu_id,
                 "connection_id": connection_id
             })
         except Exception as e:
-            logger.warning(f"Connection {connection_id}: Failed to send config to client: {e}")
+            logger.warning(f"Connection {connection_id}: Failed to send ready status: {e}")
                 
         results_generator = await audio_processor.create_tasks()
         websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, connection_id))
+        
+        logger.info(f"Connection {connection_id}: Ready to receive audio")
 
         while True:
             message = await websocket.receive_bytes()
@@ -269,6 +293,8 @@ async def websocket_endpoint(websocket: WebSocket):
             # Track first audio chunk
             performance_monitor.record_first_audio(connection_id)
             performance_monitor.record_audio_chunk(connection_id)
+            
+            logger.debug(f"Connection {connection_id}: Received audio chunk ({len(message)} bytes)")
             
             await audio_processor.process_audio(message)
     except KeyError as e:

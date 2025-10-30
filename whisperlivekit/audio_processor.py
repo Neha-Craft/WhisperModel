@@ -48,6 +48,11 @@ class AudioProcessor:
     def __init__(self, **kwargs):
         """Initialize the audio processor with configuration, models, and state."""
         
+        # Generate a unique ID for this processor instance
+        import uuid
+        self.processor_id = str(uuid.uuid4())[:8]
+        logger.info(f"🆔 AudioProcessor {self.processor_id} initializing...")
+        
         if 'transcription_engine' in kwargs and isinstance(kwargs['transcription_engine'], TranscriptionEngine):
             models = kwargs['transcription_engine']
         else:
@@ -213,12 +218,13 @@ class AudioProcessor:
     async def transcription_processor(self):
         """Process audio chunks for transcription."""
         cumulative_pcm_duration_stream_time = 0.0
+        chunk_count = 0
         
         while True:
             try:
                 item = await self.transcription_queue.get()
                 if item is SENTINEL:
-                    logger.debug("Transcription processor received sentinel. Finishing.")
+                    logger.info(f"Transcription processor received sentinel after processing {chunk_count} chunks. Finishing.")
                     self.transcription_queue.task_done()
                     break
 
@@ -237,8 +243,9 @@ class AudioProcessor:
                     self.transcription.new_speaker(item)
                 elif isinstance(item, np.ndarray):
                     pcm_array = item
+                    chunk_count += 1
                 
-                logger.info(asr_processing_logs)
+                logger.info(f"[{self.processor_id}] Processing audio chunk #{chunk_count}: {asr_processing_logs}")
                 
                 duration_this_chunk = len(pcm_array) / self.sample_rate
                 cumulative_pcm_duration_stream_time += duration_this_chunk
@@ -247,11 +254,14 @@ class AudioProcessor:
                 self.transcription.insert_audio_chunk(pcm_array, stream_time_end_of_current_pcm)
                 new_tokens, current_audio_processed_upto = await asyncio.to_thread(self.transcription.process_iter)
                 
+                logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: Got {len(new_tokens)} new tokens")
+                
                 _buffer_transcript = self.transcription.get_buffer()
                 buffer_text = _buffer_transcript.text
 
                 if new_tokens:
                     validated_text = self.sep.join([t.text for t in new_tokens])
+                    logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: New tokens text: '{validated_text}'")
                     if buffer_text.startswith(validated_text):
                         _buffer_transcript.text = buffer_text[len(validated_text):].lstrip()
 
@@ -269,6 +279,7 @@ class AudioProcessor:
                     self.state.tokens.extend(new_tokens)
                     self.state.buffer_transcription = _buffer_transcript
                     self.state.end_buffer = max(candidate_end_times)
+                    logger.info(f"[{self.processor_id}] Chunk #{chunk_count}: State updated - total tokens: {len(self.state.tokens)}, buffer: '{_buffer_transcript.text[:50]}'")
                 
                 if self.translation_queue:
                     for token in new_tokens:
@@ -277,7 +288,7 @@ class AudioProcessor:
                 self.transcription_queue.task_done()
                 
             except Exception as e:
-                logger.warning(f"Exception in transcription_processor: {e}")
+                logger.warning(f"Exception in transcription_processor after {chunk_count} chunks: {e}")
                 logger.warning(f"Traceback: {traceback.format_exc()}")
                 if 'pcm_array' in locals() and pcm_array is not SENTINEL : # Check if pcm_array was assigned from queue
                     self.transcription_queue.task_done()
@@ -411,8 +422,14 @@ class AudioProcessor:
 
     async def results_formatter(self):
         """Format processing results for output."""
+        yield_count = 0
+        iteration_count = 0
         while True:
             try:
+                iteration_count += 1
+                if iteration_count % 100 == 0:
+                    logger.info(f"results_formatter: {iteration_count} iterations, {yield_count} results yielded")
+                    
                 if self._ffmpeg_error:
                     yield FrontData(status="error", error=f"FFmpeg error: {self._ffmpeg_error}")
                     self._ffmpeg_error = None
@@ -461,11 +478,13 @@ class AudioProcessor:
                                 
                 should_push = (response != self.last_response_content)
                 if should_push and (lines or buffer_transcription or buffer_diarization or response_status == "no_audio_detected"):
+                    yield_count += 1
+                    logger.info(f"[{self.processor_id}] results_formatter: Yielding result #{yield_count} - status={response_status}, lines={len(lines)}, buffer_trans='{buffer_transcription.text[:50] if buffer_transcription else ''}', buffer_dia='{buffer_diarization[:50]}'")
                     yield response
                     self.last_response_content = response
                 
                 if self.is_stopping and self.transcription_task and self.transcription_task.done() and self.diarization_task and self.diarization_task.done():
-                    logger.info("Results formatter: All upstream processors are done and in stopping state. Terminating.")
+                    logger.info(f"Results formatter: All upstream processors are done and in stopping state. Terminating after {yield_count} results.")
                     return
                 
                 await asyncio.sleep(0.05)

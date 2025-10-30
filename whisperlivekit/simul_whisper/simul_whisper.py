@@ -267,6 +267,9 @@ class PaddedAlignAttWhisper:
         self.log_segments += 1
 
         self.pending_incomplete_tokens = []
+        
+        # CRITICAL FIX: Also clear cache when refreshing segments
+        self._clean_cache()
 
     def fire_at_boundary(self, chunked_encoder_feature: torch.Tensor):
         if self.always_fire: return True
@@ -337,9 +340,12 @@ class PaddedAlignAttWhisper:
         It must be called every time after generation with the model.'''
         # cleaning cache
         self.dec_attns = []
-        self.kv_cache = {}
+        # CRITICAL FIX: Clear cache dictionary completely and ensure beam inference gets new reference
+        self.kv_cache.clear()  # Clear existing dict instead of creating new one
         if self.decoder_type == "beam":
-            self.inference.kv_cache = self.kv_cache
+            # Ensure beam inference uses the cleared cache
+            if hasattr(self, 'inference') and self.inference:
+                self.inference.kv_cache = self.kv_cache
             self.token_decoder.reset()
 
     @torch.no_grad()
@@ -412,7 +418,9 @@ class PaddedAlignAttWhisper:
         elif self.fw_encoder:
             audio_length_seconds = len(input_segments) / 16000   
             content_mel_len = int(audio_length_seconds * 100)//2      
-            mel_padded_2 = self.fw_feature_extractor(waveform=input_segments.numpy(), padding=N_SAMPLES)[None, :]
+            # CRITICAL FIX: Move tensor to CPU before calling .numpy()
+            input_segments_cpu = input_segments.cpu() if input_segments.is_cuda else input_segments
+            mel_padded_2 = self.fw_feature_extractor(waveform=input_segments_cpu.numpy(), padding=N_SAMPLES)[None, :]
             mel = fw_pad_or_trim(mel_padded_2, N_FRAMES, axis=-1)
             encoder_feature_ctranslate = self.fw_encoder.encode(mel)
             if self.device == 'cpu': #it seems that on gpu, passing StorageView to torch.as_tensor fails and wrapping in the array works
@@ -513,6 +521,10 @@ class PaddedAlignAttWhisper:
             attn_of_alignment_heads = torch.stack(tmp, dim=1)
             std, mean = torch.std_mean(attn_of_alignment_heads, dim=-2, keepdim=True, unbiased=False)
             attn_of_alignment_heads = (attn_of_alignment_heads - mean) / std
+            # CRITICAL FIX: Ensure tensor is on correct GPU device before median_filter (Triton ops)
+            if not attn_of_alignment_heads.is_cuda or str(attn_of_alignment_heads.device) != str(self.device):
+                logger.warning(f"Attention tensor on wrong device: {attn_of_alignment_heads.device} (expected {self.device}), moving...")
+                attn_of_alignment_heads = attn_of_alignment_heads.to(self.device)
             attn_of_alignment_heads = median_filter(attn_of_alignment_heads, 7) # from whisper.timing
             attn_of_alignment_heads = attn_of_alignment_heads.mean(dim=1)
             attn_of_alignment_heads = attn_of_alignment_heads[:,:, :content_mel_len]

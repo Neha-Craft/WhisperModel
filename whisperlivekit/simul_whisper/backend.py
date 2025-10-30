@@ -80,7 +80,8 @@ class SimulStreamingOnlineProcessor:
             loaded_model=model,
             mlx_encoder=self.asr.mlx_encoder,
             fw_encoder=self.asr.fw_encoder,
-            )
+        )
+        logger.info(f"Loaded new PaddedAlignAttWhisper backend with model on device {self.model.device}")
 
     def insert_silence(self, silence_duration, offset):
         """
@@ -132,6 +133,34 @@ class SimulStreamingOnlineProcessor:
             return timestamped_words, self.end
 
             
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "size of tensor" in error_msg and "must match" in error_msg:
+                # KV cache corruption - COMPLETELY RELOAD the backend
+                logger.error(f"SimulStreaming KV cache corruption detected: {e}")
+                logger.warning("CRITICAL: Reloading entire backend to recover from cache corruption...")
+                try:
+                    # Remove old hooks before destroying model
+                    if hasattr(self.model, 'remove_hooks'):
+                        self.model.remove_hooks()
+                    
+                    # Clear all state
+                    self.buffer = []
+                    self.committed = []
+                    self.last_result_tokens = []
+                    
+                    # Reload a completely fresh backend with new model instance
+                    self.load_new_backend()
+                    
+                    logger.info("✅ Backend successfully reloaded with fresh model instance")
+                    return [], self.end
+                except Exception as recovery_error:
+                    logger.error(f"❌ Backend reload failed: {recovery_error}")
+                    logger.exception("Recovery exception details:")
+                    return [], self.end
+            else:
+                logger.exception(f"SimulStreaming processing error: {e}")
+                return [], self.end
         except Exception as e:
             logger.exception(f"SimulStreaming processing error: {e}")
             return [], self.end
@@ -253,15 +282,19 @@ class SimulStreamingASR():
                 
                 # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
                 if self.gpu_id is not None:
-                    fw_device = f'cuda:{self.gpu_id}'
+                    # CTranslate2 expects GPU index as integer, not 'cuda:X'
+                    fw_device = 'cuda'
+                    fw_device_index = self.gpu_id
                     logger.info(f"Faster-Whisper encoder using GPU {self.gpu_id}")
                 else:
                     fw_device = 'auto'
+                    fw_device_index = 0
                     logger.info("Faster-Whisper encoder using auto device")
                 
                 self.fw_encoder = WhisperModel(
                     fw_model,
                     device=fw_device,
+                    device_index=fw_device_index,
                     compute_type='auto',
                 )
                 self.fast_encoder = True

@@ -74,12 +74,12 @@ class SimulStreamingOnlineProcessor:
             self.model.tokenizer = asr.tokenizer
 
     def load_new_backend(self):
-        model = self.asr.get_new_model_instance()
+        model, fw_encoder = self.asr.get_new_model_instance()
         self.model = PaddedAlignAttWhisper(
             cfg=self.asr.cfg,
             loaded_model=model,
-            mlx_encoder=self.asr.mlx_encoder,
-            fw_encoder=self.asr.fw_encoder,
+            mlx_encoder=self.asr.mlx_encoder,  # MLX encoder can be shared
+            fw_encoder=fw_encoder,  # Use per-connection Faster-Whisper encoder
         )
         logger.info(f"Loaded new PaddedAlignAttWhisper backend with model on device {self.model.device}")
 
@@ -282,13 +282,13 @@ class SimulStreamingASR():
                 
                 # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
                 if self.gpu_id is not None:
-                    # CTranslate2 expects device_index as list of integers for specific GPUs
+                    # CTranslate2 expects GPU index as single integer
                     fw_device = 'cuda'
-                    fw_device_index = [self.gpu_id]  # Must be a list!
+                    fw_device_index = self.gpu_id
                     logger.info(f"🎯 Faster-Whisper encoder targeting GPU {self.gpu_id}")
                 else:
                     fw_device = 'auto'
-                    fw_device_index = [0]  # Default to first GPU
+                    fw_device_index = 0
                     logger.info("Faster-Whisper encoder using auto device")
                 
                 self.fw_encoder = WhisperModel(
@@ -304,6 +304,7 @@ class SimulStreamingASR():
 
 
     def load_model(self):
+        """Load a model and return (whisper_model, fw_encoder) tuple."""
         whisper_model = load_model(
             name=self.model_path if self.model_path else self.model_name,
             download_root=self.model_path,
@@ -311,7 +312,32 @@ class SimulStreamingASR():
             custom_alignment_heads=self.custom_alignment_heads
             )
         
-        # CRITICAL FIX: Use assigned GPU device for Faster-Whisper encoder
+        # CRITICAL FIX: Create per-connection Faster-Whisper encoder instance
+        # The encoder MUST be instantiated per connection to use the correct GPU
+        fw_encoder_for_this_model = None
+        if self.fast_encoder and HAS_FASTER_WHISPER and not self.mlx_encoder:
+            if self.model_path:
+                fw_model = self.model_path
+            else:
+                fw_model = self.model_name
+            
+            if self.gpu_id is not None:
+                fw_device = 'cuda'
+                fw_device_index = self.gpu_id
+                logger.info(f"🔧 Creating Faster-Whisper encoder for GPU {self.gpu_id}")
+            else:
+                fw_device = 'auto'
+                fw_device_index = 0
+            
+            fw_encoder_for_this_model = WhisperModel(
+                fw_model,
+                device=fw_device,
+                device_index=fw_device_index,
+                compute_type='auto',
+            )
+            logger.info(f"✅ Per-model Faster-Whisper encoder created on GPU {fw_device_index}")
+        
+        # Move decoder model to assigned GPU device
         if self.device is not None:
             whisper_model = whisper_model.to(self.device)
             logger.info(f"✅ Loaded Whisper decoder model on {self.device} (GPU {self.gpu_id if self.gpu_id is not None else 'default'})")
@@ -320,10 +346,6 @@ class SimulStreamingASR():
             if torch.cuda.is_available() and self.gpu_id is not None:
                 allocated = torch.cuda.memory_allocated(self.gpu_id) / (1024**3)
                 logger.info(f"📊 GPU {self.gpu_id} memory after decoder load: {allocated:.2f} GB")
-        
-        # Also log Faster-Whisper encoder GPU assignment
-        if self.fw_encoder:
-            logger.info(f"📊 Faster-Whisper encoder device info: {self.fw_encoder.device}")
         
         warmup_audio = load_file(self.warmup_file)
         if warmup_audio is not None:
@@ -335,7 +357,7 @@ class SimulStreamingASR():
                     cfg=self.cfg,
                     loaded_model=whisper_model,
                     mlx_encoder=self.mlx_encoder,
-                    fw_encoder=self.fw_encoder,
+                    fw_encoder=fw_encoder_for_this_model,  # Use per-model encoder
                 )
                 temp_model.warmup(warmup_audio)
                 temp_model.remove_hooks()
@@ -343,18 +365,22 @@ class SimulStreamingASR():
                 # For standard encoder, use the original transcribe warmup
                 warmup_audio = load_file(self.warmup_file)
                 whisper_model.transcribe(warmup_audio, language=self.lan if self.lan != 'auto' else None)
-        return whisper_model
+        
+        # Return both model and its dedicated encoder
+        return (whisper_model, fw_encoder_for_this_model)
     
     def get_new_model_instance(self):
         """
         SimulStreaming cannot share the same backend because it uses global forward hooks on the attention layers.
         Therefore, each user requires a separate model instance, which can be memory-intensive. To maintain speed, we preload the models into memory.
+        
+        Returns:
+            Tuple of (whisper_model, fw_encoder)
         """
         if len(self.models) == 0:
             self.models.append(self.load_model())
-        new_model = self.models.pop()
-        return new_model
-        # self.models[0]
+        model_tuple = self.models.pop()
+        return model_tuple
 
     def new_model_to_stack(self):
         self.models.append(self.load_model())

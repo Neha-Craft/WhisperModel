@@ -129,3 +129,6 @@ whisper.log
 test_gpu_allocation.py
 debug_test.py
 verify_fixes.py
+deploy.sh
+MULTI_GPU_TESTING.md
+setup_whisper_server.sh

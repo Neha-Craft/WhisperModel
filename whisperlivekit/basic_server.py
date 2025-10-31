@@ -82,7 +82,6 @@ async def lifespan(app: FastAPI):
                 return loaders[gpu_id](gpu_id)
             
             # Schedule preloading in background to avoid blocking server startup
-            import asyncio
             import threading
             
             def background_preload():
@@ -90,6 +89,8 @@ async def lifespan(app: FastAPI):
                     logger.info("🔄 Starting background model preloading...")
                     global_model_pool.preload_models(num_gpus, models_per_gpu, preload_for_gpu)
                     logger.info(f"🎉 Background model preloading complete! All GPUs ready.")
+                    # Log final GPU stats after preloading
+                    gpu_manager.log_all_gpu_stats()
                 except Exception as e:
                     logger.error(f"❌ Background model preloading failed: {e}")
                     logger.exception("Preload exception:")

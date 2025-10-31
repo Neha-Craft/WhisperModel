@@ -132,4 +132,3 @@ verify_fixes.py
 deploy.sh
 MULTI_GPU_TESTING.md
 setup_whisper_server.sh
-deploy_fix.sh

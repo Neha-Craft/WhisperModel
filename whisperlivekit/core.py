@@ -104,6 +104,7 @@ class TranscriptionEngine:
                     "beams": 1,
                     "decoder_type": None,
                     "audio_max_len": 20.0,
+                    "audio_min_len": 0.0,
                     "cif_ckpt_path": None,
                     "never_fire": False,
                     "init_prompt": None,

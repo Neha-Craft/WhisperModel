@@ -323,6 +323,10 @@ class SimulStreamingASR():
         
         for key, value in kwargs.items():
             setattr(self, key, value)
+        
+        # Ensure audio_min_len has a default value
+        if not hasattr(self, 'audio_min_len'):
+            self.audio_min_len = 0.0
 
         if self.decoder_type is None:
             self.decoder_type = 'greedy' if self.beams == 1 else 'beam'

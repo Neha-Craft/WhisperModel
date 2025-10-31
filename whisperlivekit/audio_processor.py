@@ -636,7 +636,11 @@ class AudioProcessor:
     async def handle_pcm_data(self):
         # Process when enough data
         if len(self.pcm_buffer) < self.bytes_per_sec:
-            return
+            # Check if we have at least 10% of the required data and some time has passed
+            # This allows processing of smaller chunks that accumulate over time
+            min_acceptable_bytes = max(1000, self.bytes_per_sec // 10)  # At least 1000 bytes or 10% of chunk size
+            if len(self.pcm_buffer) < min_acceptable_bytes:
+                return
 
         if len(self.pcm_buffer) > self.max_bytes_per_sec:
             logger.warning(

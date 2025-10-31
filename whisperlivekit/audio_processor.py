@@ -634,13 +634,12 @@ class AudioProcessor:
                     logger.warning("Failed to write audio data to FFmpeg")
 
     async def handle_pcm_data(self):
-        # Process when enough data
-        if len(self.pcm_buffer) < self.bytes_per_sec:
-            # Check if we have at least 10% of the required data and some time has passed
-            # This allows processing of smaller chunks that accumulate over time
-            min_acceptable_bytes = max(1000, self.bytes_per_sec // 10)  # At least 1000 bytes or 10% of chunk size
-            if len(self.pcm_buffer) < min_acceptable_bytes:
-                return
+        # Process when enough data is available
+        # Instead of waiting for the full chunk size, process what we have if it's meaningful
+        min_processing_bytes = 3200  # Minimum bytes to process (about 100ms at 16kHz)
+        
+        if len(self.pcm_buffer) < min_processing_bytes:
+            return
 
         if len(self.pcm_buffer) > self.max_bytes_per_sec:
             logger.warning(
@@ -648,7 +647,10 @@ class AudioProcessor:
                 f"Consider using a smaller model."
             )
 
-        chunk_size = min(len(self.pcm_buffer), self.max_bytes_per_sec)
+        # Process a chunk of data that's appropriate for processing
+        # But don't process more than 1 second of audio at a time
+        max_process_bytes = min(self.sample_rate * 2 * self.bytes_per_sample, self.max_bytes_per_sec)  # Max 2 seconds
+        chunk_size = min(len(self.pcm_buffer), max_process_bytes)
         aligned_chunk_size = (chunk_size // self.bytes_per_sample) * self.bytes_per_sample
         
         if aligned_chunk_size == 0:

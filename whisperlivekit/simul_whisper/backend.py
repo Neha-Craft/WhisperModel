@@ -493,7 +493,22 @@ class SimulStreamingASR():
                 if fw_encoder and hasattr(fw_encoder, 'model'):
                     encoder_device = getattr(fw_encoder.model, 'device', 'unknown')
                     logger.info(f"📝 Preloaded encoder device: {encoder_device}")
-                return model_tuple
+                
+                # CRITICAL FIX: Move models to the correct device for this connection's GPU
+                # Models from the pool might be on a different GPU, so we need to move them
+                if self.device is not None:
+                    logger.info(f"🔧 Moving preloaded model to device {self.device} for GPU {self.gpu_id}")
+                    whisper_model = whisper_model.to(self.device)
+                    # For Faster-Whisper encoder, we may need to recreate it on the correct GPU
+                    # if it's not already on the correct device
+                    if fw_encoder is not None and hasattr(fw_encoder, 'model'):
+                        # Check if the encoder is on the correct device
+                        encoder_device = getattr(fw_encoder.model, 'device', None)
+                        if encoder_device is not None and str(encoder_device) != str(self.device):
+                            logger.info(f"🔧 Recreating Faster-Whisper encoder on device {self.device}")
+                            # Recreate the encoder on the correct device
+                            fw_encoder = self._create_fw_encoder_for_device()
+                return (whisper_model, fw_encoder)
             else:
                 # Pool exhausted - create new model on-demand
                 logger.info(f"ℹ️ Preload pool empty for GPU {self.gpu_id}, creating new model on-demand...")
@@ -505,7 +520,37 @@ class SimulStreamingASR():
 
     def new_model_to_stack(self):
         self.models.append(self.load_model())
-        
+
+    def _create_fw_encoder_for_device(self):
+        """Create a new Faster-Whisper encoder for the current device."""
+        if not self.fast_encoder or not HAS_FASTER_WHISPER:
+            return None
+            
+        try:
+            if self.model_path:
+                fw_model = self.model_path
+            else:
+                fw_model = self.model_name
+            
+            if self.gpu_id is not None:
+                fw_device = 'cuda'
+                fw_device_index = self.gpu_id
+                logger.info(f"🔧 Creating new Faster-Whisper encoder for GPU {self.gpu_id}")
+            else:
+                fw_device = 'auto'
+                fw_device_index = 0
+            
+            fw_encoder = WhisperModel(
+                fw_model,
+                device=fw_device,
+                device_index=fw_device_index,
+                compute_type='auto',
+            )
+            logger.info(f"✅ New Faster-Whisper encoder created on GPU {fw_device_index}")
+            return fw_encoder
+        except Exception as e:
+            logger.error(f"❌ Failed to create Faster-Whisper encoder for GPU {self.gpu_id}: {e}")
+            return None
 
     def set_translate_task(self):
         """Set up translation task."""
